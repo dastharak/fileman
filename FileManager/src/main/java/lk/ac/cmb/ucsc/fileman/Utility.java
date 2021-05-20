@@ -23,21 +23,53 @@ SOFTWARE.
  */
 package lk.ac.cmb.ucsc.fileman;
 
-import com.github.filemanager.FileManager;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 
 /**
  *
  * @author UCSC
  */
-public class Main {
+public class Utility {
 
-    /**
-     * @param args the command line arguments
-     */
-    public static void main(String[] args) {
-        FileManager fm = new FileManager();
-        //TODO read ini file to find the configuration file
-        fm.main(args);
+    public void setLastException(Throwable lastException) {
+        this.lastException = lastException;
+        lastError = lastException.getMessage();
+    }
+    Throwable lastException;
+    String lastError;
+    
+    
+    public void print(String ...list){
+        String scon = "";
+        for(String s :list){
+            scon+=s;
+        }
+        System.out.print(scon);
     }
     
+    public int close(Object resource){
+        if(resource==null){
+            return -1;
+        }
+        if(resource instanceof FileChannel){
+            try{
+                ((FileChannel) resource).close();
+                return 0;
+            }catch(Throwable t){
+                lastException = t;
+                lastError = t.getMessage();
+            }
+        }
+        return 1;
+    }
+    
+    /**
+     * 
+     * @param sib - size in bytes
+     * @return String representation with appropriate units
+     */
+    public String convetDataUnits(long sib){
+        return (sib<1024)?sib+" bytes":(sib<1048576)?(sib/1024)+" KB":(sib<1073741824)?sib/1048576+" MB":sib/1099511627776l+" GB";
+    }
 }

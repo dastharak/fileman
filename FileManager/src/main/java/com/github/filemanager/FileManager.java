@@ -24,34 +24,28 @@ SOFTWARE.
 package com.github.filemanager;
 
 import java.awt.BorderLayout;
-import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Desktop;
 import java.awt.Dimension;
-import java.awt.Container;
-import java.awt.Component;
-import java.awt.Graphics;
+import java.awt.FlowLayout;
+import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.event.*;
-import java.awt.image.*;
-
+import java.io.*;
+import java.net.URL;
+import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.border.*;
 import javax.swing.event.*;
-import javax.swing.tree.*;
-import javax.swing.table.*;
 import javax.swing.filechooser.FileSystemView;
-
-import javax.imageio.ImageIO;
-
-import java.util.Date;
-import java.util.List;
-import java.util.ArrayList;
-
-import java.io.*;
-import java.nio.channels.FileChannel;
-
-import java.net.URL;
+import javax.swing.table.*;
+import javax.swing.tree.*;
+import lk.ac.cmb.ucsc.fileman.Utility;
 import org.apache.commons.io.FileUtils;
 
 /**
@@ -96,6 +90,14 @@ public class FileManager {
 
     /** currently selected File. */
     private File currentFile;
+    
+    /* directory last selected by the user */
+    private File lastSelectedDirectory;
+
+    /** currently selected File to be copied*/
+    private File currentFileToCopy;    
+    /** currently selected File is copied.*/
+    private boolean currentFileCopied = false;
 
     /** Main GUI container */
     private JPanel gui;
@@ -120,6 +122,7 @@ public class FileManager {
     private JButton deleteFile;
     private JButton newFile;
     private JButton copyFile;
+    private JButton pasteFile;
     /* File details. */
     private JLabel fileName;
     private JTextField path;
@@ -135,6 +138,8 @@ public class FileManager {
     private JPanel newFilePanel;
     private JRadioButton newTypeFile;
     private JTextField name;
+    
+    private static Utility utility = new Utility();
 
     public Container getGui() {
         if (gui==null) {
@@ -178,7 +183,7 @@ public class FileManager {
                 }
             };
 
-            // show the file system roots.
+            // show the file system roots. (e.e.g: starting directory : Desktop)
             File[] roots = fileSystemView.getRoots();
             for (File fileSystemRoot : roots) {
                 DefaultMutableTreeNode node = new DefaultMutableTreeNode(fileSystemRoot);
@@ -315,10 +320,52 @@ public class FileManager {
             copyFile.setMnemonic('c');
             copyFile.addActionListener(new ActionListener(){
                 public void actionPerformed(ActionEvent ae) {
-                    showErrorMessage("'Copy' not implemented.", "Not implemented.");
+                    //showErrorMessage("'Copy' not implemented.", "Not implemented.");
+                    currentFileCopied = true;
+                    currentFileToCopy = currentFile;
+                    pasteFile.setEnabled(true);
                 }
             });
             toolBar.add(copyFile);
+            
+            pasteFile = new JButton("Paste");
+            pasteFile.setMnemonic('p');
+            pasteFile.setEnabled(currentFileCopied);
+            pasteFile.addActionListener(new ActionListener(){
+                @Override
+                public void actionPerformed(ActionEvent ae) {
+                    if(lastSelectedDirectory!=null){
+                        String originDir = currentFileToCopy.getParent();
+                        if(lastSelectedDirectory.getAbsolutePath().equals(originDir)){
+                            JOptionPane.showMessageDialog(gui,"Source and destination directories are same."+System.lineSeparator()
+                                    +originDir,"Will not copy",JOptionPane.ERROR_MESSAGE);
+                            return;
+                        }
+                        String fileName = currentFileToCopy.getName();
+                        File newFile = new File(currentFile.getAbsolutePath()+File.separatorChar+fileName);
+                        utility.print("Copying:",currentFileToCopy.getAbsolutePath(),"To",newFile.getAbsolutePath());
+                        long retVal = copyFile(currentFileToCopy, newFile,false);
+                        if(retVal>=0){//copied
+                            JOptionPane.showMessageDialog(gui,"Copied "+utility.convetDataUnits(retVal)+" successfully.","File Copy Result",JOptionPane.INFORMATION_MESSAGE);
+                        }
+                        else if(retVal == -2){//already existing file
+                            int optionSelected = JOptionPane.showConfirmDialog(gui,"File already exists. Overwrite?","File Copy Question?",JOptionPane.YES_NO_CANCEL_OPTION);
+                            if(optionSelected == JOptionPane.YES_OPTION){//overwrite
+                                retVal = copyFile(currentFileToCopy, newFile,true);
+                                if(retVal >=0 ){
+                                    JOptionPane.showMessageDialog(gui,"Copied "+utility.convetDataUnits(retVal)+" successfully.","File Copy Result",JOptionPane.INFORMATION_MESSAGE);
+                                }
+                            }else if(optionSelected == JOptionPane.NO_OPTION){
+                                utility.print("Prompt new name for new file");
+                            }
+                        }
+                        else{
+                            JOptionPane.showMessageDialog(gui,"Error occured!","File Copy Result",JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                }
+            });
+            toolBar.add(pasteFile);
 
             JButton renameFile = new JButton("Rename");
             renameFile.setMnemonic('r');
@@ -482,7 +529,7 @@ public class FileManager {
                     showChildren(parentNode);
                 } else {
                     String msg = "The file '" +
-                        currentFile +
+                        currentFile.getAbsolutePath() +
                         "' could not be deleted.";
                     showErrorMessage(msg,"Delete Failed");
                 }
@@ -678,6 +725,9 @@ public class FileManager {
 
     /** Update the File details view with the details of this File. */
     private void setFileDetails(File file) {
+        if(file!=null && file.isDirectory()){
+            lastSelectedDirectory = file;
+        }
         currentFile = file;
         Icon icon = fileSystemView.getSystemIcon(file);
         fileName.setIcon(icon);
@@ -702,35 +752,36 @@ public class FileManager {
 
         gui.repaint();
     }
-
-    public static boolean copyFile(File from, File to) throws IOException {
-
-        boolean created = to.createNewFile();
-
-        if (created) {
-            FileChannel fromChannel = null;
-            FileChannel toChannel = null;
-            try {
-                fromChannel = new FileInputStream(from).getChannel();
-                toChannel = new FileOutputStream(to).getChannel();
-
-                toChannel.transferFrom(fromChannel, 0, fromChannel.size());
-
-                // set the flags of the to the same as the from
-                to.setReadable(from.canRead());
-                to.setWritable(from.canWrite());
-                to.setExecutable(from.canExecute());
-            } finally {
-                if (fromChannel != null) {
-                    fromChannel.close();
+    
+    public static long copyFile(File from, File to, boolean overwrite) {
+        FileChannel fromChannel = null;
+        FileChannel toChannel = null;
+        long retVal = -1;
+        try {
+            if(to.exists() && !overwrite){
+                retVal = -2;
+            }else{
+                if (overwrite || to.createNewFile()) {//overwrite existing OR create a new file
+                    fromChannel = new FileInputStream(from).getChannel();
+                    toChannel = new FileOutputStream(to).getChannel();
+                    long sizefrom = fromChannel.size();
+                    retVal = toChannel.transferFrom(fromChannel, 0, sizefrom);
+                    retVal = (retVal != sizefrom)?-4:retVal;
+                    // set the flags of the to the same as the from
+                    to.setReadable(from.canRead());
+                    to.setWritable(from.canWrite());
+                    to.setExecutable(from.canExecute());
                 }
-                if (toChannel != null) {
-                    toChannel.close();
-                }
-                return false;
             }
+            
+        } catch (Exception e) {
+            utility.setLastException(e);
+            retVal = -3;
+        } finally {
+            new Utility().close(fromChannel);
+            new Utility().close(toChannel);
         }
-        return created;
+        return retVal;
     }
 
     public void main(String[] args) {
@@ -741,6 +792,7 @@ public class FileManager {
                     // terms of the file names returned by FileSystemView!
                     UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
                 } catch(Exception weTried) {
+                    utility.setLastException(weTried);
                 }
                 JFrame f = new JFrame(APP_TITLE);
                 f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -751,15 +803,18 @@ public class FileManager {
                 try {
                     URL urlBig = fileManager.getClass().getResource("fm-icon-32x32.png");
                     URL urlSmall = fileManager.getClass().getResource("fm-icon-16x16.png");
-                    ArrayList<Image> images = new ArrayList<Image>();
-                    images.add( ImageIO.read(urlBig) );
-                    images.add( ImageIO.read(urlSmall) );
+                    ArrayList<Image> images = new ArrayList<>();
+                    images.add(ImageIO.read(urlBig) );
+                    images.add(ImageIO.read(urlSmall) );
                     f.setIconImages(images);
-                } catch(Exception weTried) {}
+                } catch(Exception weTried) {
+                    utility.setLastException(weTried);
+                }
 
                 f.pack();
                 f.setLocationByPlatform(true);
                 f.setMinimumSize(f.getSize());
+                f.setExtendedState(JFrame.MAXIMIZED_BOTH);
                 f.setVisible(true);
 
                 fileManager.showRootFile();
